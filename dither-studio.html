@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laser Dither Studio</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Laser Dither Studio</h1>
+  <span class="tag">100% local &mdash; your images never leave this computer</span>
+</header>
+
+<main>
+  <!-- ================= SIDEBAR ================= -->
+  <div id="sidebar">
+
+    <div class="sec">
+      <h2>Image</h2>
+      <div class="btnrow">
+        <button id="btnOpen" class="primary">Open image&hellip;</button>
+        <button id="btnSample">Load test image</button>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <div class="hint">Or drag &amp; drop / paste an image anywhere.</div>
+    </div>
+
+    <div class="sec">
+      <h2>Material</h2>
+      <select id="material">
+        <option value="wood">Wood</option>
+        <option value="slate">Black slate</option>
+        <option value="acrylic">Acrylic (black)</option>
+        <option value="leather">Leather</option>
+        <option value="cork">Cork</option>
+        <option value="glass">Glass</option>
+        <option value="alu">Anodized aluminium</option>
+        <option value="tile">White tile (Norton method)</option>
+      </select>
+      <label class="check"><input type="checkbox" id="previewMat" checked> Preview on material</label>
+      <label class="check"><input type="checkbox" id="invert"> Invert image <span class="hint" style="margin:0">(auto-set per material)</span></label>
+    </div>
+
+    <div class="sec">
+      <h2>Board / workpiece</h2>
+      <label class="check"><input type="checkbox" id="boardOn"> Show board</label>
+      <div id="boardCtl" style="display:none">
+        <div class="row"><label>Width (mm)</label><input type="number" id="boardW" min="10" max="3000" step="1" value="300"><span class="grow"></span></div>
+        <div class="row"><label>Height (mm)</label><input type="number" id="boardH" min="10" max="3000" step="1" value="200"><span class="grow"></span></div>
+        <div class="row"><label>Image X (mm)</label><input type="number" id="posX" step="0.5" value="0"><span class="grow"></span></div>
+        <div class="row"><label>Image Y (mm)</label><input type="number" id="posY" step="0.5" value="0"><span class="grow"></span></div>
+        <div class="btnrow">
+          <button id="btnCenter">Center on board</button>
+          <button id="btnBoardPreview">Preview placement</button>
+        </div>
+        <div class="hint">Drag the image to position it on the board. Visual guide only &mdash; the exported PNG is not affected.</div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Size &amp; DPI</h2>
+      <div class="row"><label>Width (mm)</label><input type="number" id="wmm" min="1" max="2000" step="0.5" value="100"><span class="grow"></span></div>
+      <div class="row"><label>Height (mm)</label><input type="number" id="hmm" min="1" max="2000" step="0.5" value="100"><span class="grow"></span></div>
+      <label class="check"><input type="checkbox" id="lockAspect" checked> Lock aspect ratio</label>
+      <div class="row">
+        <label>DPI</label>
+        <select id="dpi" style="width:90px">
+          <option value="254" selected>254</option>
+          <option value="282">282</option>
+          <option value="423">423</option>
+          <option value="508">508</option>
+        </select>
+        <span class="grow hint" id="pxInfo"></span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Crop</h2>
+      <div class="btnrow">
+        <button id="btnCrop">Crop image</button>
+        <button id="btnCropReset" class="warn">Reset crop</button>
+      </div>
+      <label class="check"><input type="checkbox" id="cropCircle"> Circle crop</label>
+      <div class="btnrow" id="cropActions" style="display:none">
+        <button id="btnCropApply" class="primary">Apply crop</button>
+        <button id="btnCropCancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Adjustments</h2>
+      <div class="sliderRow"><label>Brightness</label><input type="range" id="brightness" min="-100" max="100" step="1" value="0"><input type="number" id="brightnessN" min="-100" max="100" step="1" value="0"></div>
+      <div class="sliderRow"><label>Contrast</label><input type="range" id="contrast" min="-100" max="100" step="1" value="0"><input type="number" id="contrastN" min="-100" max="100" step="1" value="0"></div>
+      <div class="sliderRow"><label>Gamma</label><input type="range" id="gamma" min="0.1" max="3" step="0.01" value="1"><input type="number" id="gammaN" min="0.1" max="3" step="0.01" value="1"></div>
+      <div class="btnrow"><button id="btnResetAdj">Reset adjustments</button></div>
+    </div>
+
+    <div class="sec">
+      <h2>Enhance (unsharp mask)</h2>
+      <div class="sliderRow"><label>Radius</label><input type="range" id="usRadius" min="0" max="60" step="1" value="0"><input type="number" id="usRadiusN" min="0" max="60" step="1" value="0"></div>
+      <div class="sliderRow"><label>Amount</label><input type="range" id="usAmount" min="0" max="1500" step="5" value="0"><input type="number" id="usAmountN" min="0" max="1500" step="1" value="0"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Dither algorithm</h2>
+      <select id="algo">
+        <option value="jarvis" selected>Jarvis&ndash;Judice&ndash;Ninke (smooth photo)</option>
+        <option value="stucki">Stucki (crisp photo)</option>
+        <option value="floyd">Floyd&ndash;Steinberg (classic)</option>
+        <option value="atkinson">Atkinson (high contrast)</option>
+        <option value="burkes">Burkes</option>
+        <option value="sierra">Sierra (3-row)</option>
+        <option value="sierra2">Sierra two-row</option>
+        <option value="sierralite">Sierra lite (fast)</option>
+        <option value="bayer">Ordered &mdash; Bayer 8&times;8</option>
+        <option value="halftone">Halftone &mdash; clustered dot</option>
+        <option value="sketch">Sketch (pencil + Jarvis)</option>
+        <option value="threshold">Threshold 50% (no dither)</option>
+      </select>
+      <div class="hint">
+        imag-r's names (Norton, Kasia, Baning&hellip;) are proprietary presets built on these
+        open algorithms. <b>Jarvis / Stucki</b> give the smooth photographic look;
+        <b>Norton</b> = white tile material + invert.
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Export</h2>
+      <div class="btnrow">
+        <button id="btnExport" class="primary">Download PNG</button>
+        <button id="btnMockup">Download mockup (JPG)</button>
+      </div>
+      <div class="hint">PNG is saved with your DPI embedded — in LightBurn/xTool import it and set image mode to <b>Pass-through</b>. The mockup JPG is the smooth &ldquo;how it will look&rdquo; picture (with board, if shown) for sending to customers.</div>
+    </div>
+  </div>
+
+  <!-- ================= STAGE ================= -->
+  <div id="stageWrap">
+    <div id="toolbar">
+      <label class="hint" style="margin:0">Zoom</label>
+      <select id="zoom" style="width:90px">
+        <option value="fit" selected>Fit</option>
+        <option value="0.25">25%</option>
+        <option value="0.5">50%</option>
+        <option value="1">100%</option>
+        <option value="2">200%</option>
+        <option value="4">400%</option>
+        <option id="zoomCustom" hidden value=""></option>
+      </select>
+      <span class="hint">scroll = zoom &bull; middle-drag = pan</span>
+      <button id="btnEngrave" title="Simulate the finished engraving — dots blend together like the real laser burn">Engraved preview</button>
+      <span class="spacer"></span>
+      <span id="info"></span>
+    </div>
+    <div id="warn"></div>
+    <div id="stage">
+      <div id="dropMsg"><b>Drop an image here</b><br>or use “Open image…” / paste from clipboard</div>
+      <div id="boardWrap" style="display:none">
+        <canvas id="boardBg"></canvas>
+        <canvas id="previewCanvas"></canvas>
+      </div>
+      <canvas id="cropCanvas" style="display:none"></canvas>
+      <span id="busy">processing&hellip;</span>
+    </div>
+    <div id="minimap">
+      <canvas id="minimapCanvas"></canvas>
+      <div id="minimapBox"></div>
+    </div>
+  </div>
+</main>
+
+<script src="js/backgrounds.js"></script>
+<script src="js/materials.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
