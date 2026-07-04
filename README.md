@@ -2,7 +2,7 @@
 
 A free, 100% offline image dithering tool for laser engraving. Runs entirely in your browser — **your images never leave your computer**.
 
-**[▶ Use it in your browser](https://BEN_GH_USER.github.io/dither-studio/)** &nbsp;·&nbsp; **[⬇ Download the single-file offline version](dist/dither-studio-portable.html)** (save the file, double-click it, done — no install, no internet needed)
+**[▶ Use it in your browser](https://laperiut.github.io/dither-studio/)** &nbsp;·&nbsp; **[⬇ Download the single-file offline version](dist/dither-studio-portable.html)** (save the file, double-click it, done — no install, no internet needed)
 
 ![Laser Dither Studio](https://img.shields.io/badge/100%25-offline-brightgreen) ![License](https://img.shields.io/badge/license-MIT-blue)
 
