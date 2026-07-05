@@ -195,12 +195,7 @@
       <label class="check"><input type="checkbox" id="lockAspect" checked> Lock aspect ratio</label>
       <div class="row">
         <label>DPI</label>
-        <select id="dpi" style="width:90px">
-          <option value="254" selected>254</option>
-          <option value="282">282</option>
-          <option value="423">423</option>
-          <option value="508">508</option>
-        </select>
+        <input type="number" id="dpi" min="10" max="1200" step="1" value="254" style="width:90px">
         <span class="grow hint" id="pxInfo"></span>
       </div>
     </div>
@@ -1385,7 +1380,8 @@ $('hmm').addEventListener('change', e => {
   scheduleRender();
 });
 $('dpi').addEventListener('change', e => {
-  params.dpi = parseFloat(e.target.value);
+  params.dpi = Math.min(1200, Math.max(10, parseFloat(e.target.value)||254));
+  e.target.value = params.dpi;
   scheduleRender();
 });
 window.addEventListener('resize', applyZoom);

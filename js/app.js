@@ -795,7 +795,8 @@ $('hmm').addEventListener('change', e => {
   scheduleRender();
 });
 $('dpi').addEventListener('change', e => {
-  params.dpi = parseFloat(e.target.value);
+  params.dpi = Math.min(1200, Math.max(10, parseFloat(e.target.value)||254));
+  e.target.value = params.dpi;
   scheduleRender();
 });
 window.addEventListener('resize', applyZoom);
