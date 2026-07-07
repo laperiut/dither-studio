@@ -28,7 +28,14 @@
   .sec h2{
     font-size:11px; letter-spacing:.08em; text-transform:uppercase;
     color:var(--dim); margin-bottom:8px;
+    display:flex; align-items:center; gap:7px;
+    cursor:pointer; user-select:none;
   }
+  .sec h2:hover{color:var(--text);}
+  .sec h2::before{content:'\25BE'; font-size:9px; color:var(--accent);}
+  .sec.closed h2::before{content:'\25B8';}
+  .sec.closed h2{margin-bottom:0;}
+  .sec.closed > :not(h2){display:none !important;}
   .row{display:flex; align-items:center; gap:8px; margin:6px 0;}
   .row label{flex:0 0 78px; color:var(--dim);}
   .row .grow{flex:1;}

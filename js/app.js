@@ -161,9 +161,13 @@ function retextSchedule(){
   textTimer = setTimeout(() => { textTimer = null; retext(); }, 30);
 }
 
-/* render one text item to a tight transparent canvas, centred on (x,y) mm */
+/* render one text item, centred on (x,y) mm. Returns the glyph canvas and,
+   when t.offset > 0, a halo canvas: the glyphs dilated by the offset
+   distance (a fat round-join stroke around the outline is a true outward
+   offset, like LightBurn's offset shape). */
 function renderTextItem(t){
   const px = Math.max(2, mm2px(t.size));
+  const rPx = Math.max(0, mm2px(t.offset || 0));
   const lines = String(t.text).split('\n');
   const fontStr = `${t.italic?'italic ':''}${t.bold?'bold ':''}${px}px "${t.font}"`;
   const lh = px*1.25;
@@ -174,42 +178,65 @@ function renderTextItem(t){
   for (const ln of lines) tw = Math.max(tw, meas.measureText(ln).width);
   const th = lh*lines.length;
   const rad = (t.rot||0)*Math.PI/180;
-  const bw = Math.min(16000, Math.ceil(tw*Math.abs(Math.cos(rad)) + th*Math.abs(Math.sin(rad))) + 4);
-  const bh = Math.min(16000, Math.ceil(tw*Math.abs(Math.sin(rad)) + th*Math.abs(Math.cos(rad))) + 4);
-  const c = document.createElement('canvas');
-  c.width = bw; c.height = bh;
-  const x = c.getContext('2d');
-  x.font = fontStr;
-  x.textAlign = 'center';
-  x.textBaseline = 'middle';
-  x.fillStyle = '#000';
-  x.translate(bw/2, bh/2);
-  x.rotate(rad);
-  lines.forEach((ln, i) => x.fillText(ln, 0, (i - (lines.length-1)/2)*lh));
-  return {c, x0: Math.round(mm2px(t.x) - bw/2), y0: Math.round(mm2px(t.y) - bh/2)};
+  const pad = 2 + Math.ceil(rPx);
+  const bw = Math.min(16000, Math.ceil(tw*Math.abs(Math.cos(rad)) + th*Math.abs(Math.sin(rad))) + 2*pad);
+  const bh = Math.min(16000, Math.ceil(tw*Math.abs(Math.sin(rad)) + th*Math.abs(Math.cos(rad))) + 2*pad);
+  const draw = dilate => {
+    const c = document.createElement('canvas');
+    c.width = bw; c.height = bh;
+    const x = c.getContext('2d');
+    x.font = fontStr;
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.fillStyle = x.strokeStyle = '#000';
+    x.translate(bw/2, bh/2);
+    x.rotate(rad);
+    if (dilate){ x.lineWidth = rPx*2; x.lineJoin = 'round'; x.lineCap = 'round'; }
+    lines.forEach((ln, i) => {
+      const y = (i - (lines.length-1)/2)*lh;
+      if (dilate) x.strokeText(ln, 0, y);
+      x.fillText(ln, 0, y);
+    });
+    return c;
+  };
+  return {c: draw(false), halo: rPx >= 1 ? draw(true) : null,
+          x0: Math.round(mm2px(t.x) - bw/2), y0: Math.round(mm2px(t.y) - bh/2)};
+}
+
+/* stamp every alpha>=128 pixel of a canvas into the target arrays */
+function stampCanvas(c, x0, y0, W, H, put){
+  const cw = c.width, ch = c.height;
+  const d = c.getContext('2d').getImageData(0, 0, cw, ch).data;
+  for (let yy = 0; yy < ch; yy++){
+    const gy = y0 + yy;
+    if (gy < 0 || gy >= H) continue;
+    for (let xx = 0; xx < cw; xx++){
+      const gx = x0 + xx;
+      if (gx < 0 || gx >= W) continue;
+      if (d[(yy*cw + xx)*4 + 3] < 128) continue;   // hard edge, no AA speckle
+      put(gy*W + gx);
+    }
+  }
 }
 
 function applyTexts(burn, mask, W, H){
   state.textBoxes = state.texts.map(() => null);
+  const items = [];
   state.texts.forEach((t, idx) => {
     if (!String(t.text).trim()) return;
     const r = renderTextItem(t);
-    const tw = r.c.width, th = r.c.height;
-    state.textBoxes[idx] = {x: r.x0, y: r.y0, w: tw, h: th};
-    const d = r.c.getContext('2d').getImageData(0, 0, tw, th).data;
-    for (let yy = 0; yy < th; yy++){
-      const gy = r.y0 + yy;
-      if (gy < 0 || gy >= H) continue;
-      for (let xx = 0; xx < tw; xx++){
-        const gx = r.x0 + xx;
-        if (gx < 0 || gx >= W) continue;
-        if (d[(yy*tw + xx)*4 + 3] < 128) continue;   // hard edge, no AA speckle
-        const i = gy*W + gx;
-        if (t.mode === 'blank') burn[i] = 0;
-        else { burn[i] = 1; mask[i] = 1; }
-      }
-    }
+    state.textBoxes[idx] = {x: r.x0, y: r.y0, w: r.c.width, h: r.c.height};
+    items.push({t, r});
   });
+  // pass 1: every offset halo clears the image, so a neighbouring text's
+  //         pixels can never engrave inside another text's breathing room
+  for (const {r} of items)
+    if (r.halo) stampCanvas(r.halo, r.x0, r.y0, W, H, i => { burn[i] = 0; });
+  // pass 2: the glyphs themselves
+  for (const {t, r} of items)
+    stampCanvas(r.c, r.x0, r.y0, W, H,
+      t.mode === 'blank' ? i => { burn[i] = 0; }
+                         : i => { burn[i] = 1; mask[i] = 1; });
 }
 
 /* ---------------- preview drawing ---------------- */
@@ -942,10 +969,13 @@ function syncTextEditor(){
   $('txX').value = round1(t.x);
   $('txY').value = round1(t.y);
   $('txRot').value = t.rot;
+  $('txOffset').value = t.offset || 0;
 }
 
 function selectText(i){
   state.selText = i;
+  const sec = $('textEd').closest('.sec');
+  if (sec) sec.classList.remove('closed');   // e.g. selected by clicking the preview
   renderTextList();
   syncTextEditor();
 }
@@ -963,6 +993,7 @@ $('btnAddText').onclick = () => {
     text: 'Your text', font: $('txFont').value || 'Arial',
     size: Math.max(3, round1(params.hmm/8)), bold: false, italic: false,
     mode: 'burn', x: round1(params.wmm/2), y: round1(params.hmm*0.85), rot: 0,
+    offset: 3,
   });
   selectText(state.texts.length-1);
   retextSchedule();
@@ -1019,6 +1050,12 @@ $('txRot').addEventListener('change', e => {
   const t = curText(); if (!t) return;
   t.rot = Math.min(180, Math.max(-180, parseFloat(e.target.value) || 0));
   e.target.value = t.rot;
+  retextSchedule();
+});
+$('txOffset').addEventListener('change', e => {
+  const t = curText(); if (!t) return;
+  t.offset = Math.min(50, Math.max(0, parseFloat(e.target.value) || 0));
+  e.target.value = t.offset;
   retextSchedule();
 });
 
@@ -1186,5 +1223,23 @@ function insertPngDpi(png, dpi){
   out.set(png.subarray(insertAt), insertAt + chunk.length);
   return out;
 }
+
+/* ---------------- collapsible sidebar sections ---------------- */
+const SEC_KEY = 'ditherStudio.closedSections';
+(function initSections(){
+  const title = sec => sec.querySelector('h2').textContent;
+  let closed = null;
+  try { closed = JSON.parse(localStorage.getItem(SEC_KEY) || 'null'); } catch(e){}
+  if (!Array.isArray(closed))
+    closed = ['Board / workpiece', 'Crop', 'Adjustments', 'Enhance (unsharp mask)'];
+  document.querySelectorAll('#sidebar .sec').forEach(sec => {
+    if (closed.includes(title(sec))) sec.classList.add('closed');
+    sec.querySelector('h2').addEventListener('click', () => {
+      sec.classList.toggle('closed');
+      const now = [...document.querySelectorAll('#sidebar .sec.closed')].map(title);
+      try { localStorage.setItem(SEC_KEY, JSON.stringify(now)); } catch(e){}
+    });
+  });
+})();
 
 updateInfo();
