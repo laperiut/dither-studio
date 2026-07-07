@@ -113,6 +113,9 @@
           <input type="number" id="txY" step="0.5">
         </div>
         <div class="row"><label>Rotation (&deg;)</label><input type="number" id="txRot" min="-180" max="180" step="1" value="0"><span class="grow"></span></div>
+        <div class="row" title="Keep-out band around the text: the image is not engraved within this distance of the letters, so the text sits in clean material (like an offset mask in LightBurn)">
+          <label>Offset (mm)</label><input type="number" id="txOffset" min="0" max="50" step="0.5" value="3"><span class="grow hint" style="margin:0">clear space around text</span>
+        </div>
         <div class="btnrow"><button id="btnDelText" class="warn">Delete this text</button></div>
       </div>
       <div class="hint">Drag text on the preview to position it. Text is stamped solid after dithering so it stays crisp in the exported PNG.</div>
