@@ -14,7 +14,11 @@ const state = {
   aspect: 1,           // h/w of source
   cropMode: false,
   crop: null,          // {x,y,w,h} in original-image coords
-  out: null,           // last dither result {burn:Uint8Array, mask:Uint8Array, W, H}
+  base: null,          // dither result before text {burn:Uint8Array, mask:Uint8Array, W, H}
+  out: null,           // base + text stamped in — what preview/export consume
+  texts: [],           // {text, font, size(mm), bold, italic, mode:'burn'|'blank', x, y(mm, centre), rot}
+  selText: -1,
+  textBoxes: [],       // per text: {x,y,w,h} in target px, for drag hit-testing
 };
 
 const params = {
@@ -130,9 +134,82 @@ function renderCore(W, H){
   else if (a === 'sketch')    burn = errorDiffuse(gray, W, H, mask, KERNELS.jarvis);
   else                        burn = errorDiffuse(gray, W, H, mask, KERNELS[a]);
 
+  state.base = {burn, mask, W, H};
+  retext();
+  updateInfo();
+}
+
+/* ---------------- text overlay ----------------
+   Text is stamped into the burn mask AFTER dithering: solid pixels, no
+   dither speckle on the glyph edges, and it flows into the PNG export,
+   mockup and engraved preview for free. */
+
+/* re-apply all texts onto a copy of the cached dither result — cheap,
+   so dragging text never re-runs the dither pipeline */
+function retext(){
+  if (!state.base) return;
+  const {W, H} = state.base;
+  const burn = new Uint8Array(state.base.burn);
+  const mask = new Uint8Array(state.base.mask);
+  applyTexts(burn, mask, W, H);
   state.out = {burn, mask, W, H};
   drawPreview();
-  updateInfo();
+}
+let textTimer = null;
+function retextSchedule(){
+  if (textTimer) return;
+  textTimer = setTimeout(() => { textTimer = null; retext(); }, 30);
+}
+
+/* render one text item to a tight transparent canvas, centred on (x,y) mm */
+function renderTextItem(t){
+  const px = Math.max(2, mm2px(t.size));
+  const lines = String(t.text).split('\n');
+  const fontStr = `${t.italic?'italic ':''}${t.bold?'bold ':''}${px}px "${t.font}"`;
+  const lh = px*1.25;
+  const meas = renderTextItem.ctx ||
+    (renderTextItem.ctx = document.createElement('canvas').getContext('2d'));
+  meas.font = fontStr;
+  let tw = 1;
+  for (const ln of lines) tw = Math.max(tw, meas.measureText(ln).width);
+  const th = lh*lines.length;
+  const rad = (t.rot||0)*Math.PI/180;
+  const bw = Math.min(16000, Math.ceil(tw*Math.abs(Math.cos(rad)) + th*Math.abs(Math.sin(rad))) + 4);
+  const bh = Math.min(16000, Math.ceil(tw*Math.abs(Math.sin(rad)) + th*Math.abs(Math.cos(rad))) + 4);
+  const c = document.createElement('canvas');
+  c.width = bw; c.height = bh;
+  const x = c.getContext('2d');
+  x.font = fontStr;
+  x.textAlign = 'center';
+  x.textBaseline = 'middle';
+  x.fillStyle = '#000';
+  x.translate(bw/2, bh/2);
+  x.rotate(rad);
+  lines.forEach((ln, i) => x.fillText(ln, 0, (i - (lines.length-1)/2)*lh));
+  return {c, x0: Math.round(mm2px(t.x) - bw/2), y0: Math.round(mm2px(t.y) - bh/2)};
+}
+
+function applyTexts(burn, mask, W, H){
+  state.textBoxes = state.texts.map(() => null);
+  state.texts.forEach((t, idx) => {
+    if (!String(t.text).trim()) return;
+    const r = renderTextItem(t);
+    const tw = r.c.width, th = r.c.height;
+    state.textBoxes[idx] = {x: r.x0, y: r.y0, w: tw, h: th};
+    const d = r.c.getContext('2d').getImageData(0, 0, tw, th).data;
+    for (let yy = 0; yy < th; yy++){
+      const gy = r.y0 + yy;
+      if (gy < 0 || gy >= H) continue;
+      for (let xx = 0; xx < tw; xx++){
+        const gx = r.x0 + xx;
+        if (gx < 0 || gx >= W) continue;
+        if (d[(yy*tw + xx)*4 + 3] < 128) continue;   // hard edge, no AA speckle
+        const i = gy*W + gx;
+        if (t.mode === 'blank') burn[i] = 0;
+        else { burn[i] = 1; mask[i] = 1; }
+      }
+    }
+  });
 }
 
 /* ---------------- preview drawing ---------------- */
@@ -425,22 +502,56 @@ function updateBoard(){
   updateInfo();
 }
 
-/* drag the image to position it on the board */
-let imgDrag = null;
+/* drag text (topmost hit) or, on a board, the image itself */
+let imgDrag = null, txtDrag = null;
+function textHit(e){
+  if (!state.out) return -1;
+  const r = $('previewCanvas').getBoundingClientRect();
+  const cx = (e.clientX - r.left)/r.width  * state.out.W;
+  const cy = (e.clientY - r.top) /r.height * state.out.H;
+  for (let i = state.texts.length-1; i >= 0; i--){
+    const b = state.textBoxes[i];
+    if (b && cx >= b.x && cx <= b.x+b.w && cy >= b.y && cy <= b.y+b.h) return i;
+  }
+  return -1;
+}
 $('previewCanvas').addEventListener('pointerdown', e => {
-  if (e.button !== 0 || !params.boardOn || state.cropMode) return;
+  if (e.button !== 0 || state.cropMode) return;
+  const hit = textHit(e);
+  if (hit >= 0){
+    e.preventDefault();
+    selectText(hit);
+    const t = state.texts[hit];
+    txtDrag = {i:hit, x:e.clientX, y:e.clientY, tx:t.x, ty:t.y};
+    $('previewCanvas').setPointerCapture(e.pointerId);
+    return;
+  }
+  if (!params.boardOn) return;
   e.preventDefault();
   imgDrag = {x:e.clientX, y:e.clientY, px:params.posX, py:params.posY};
   $('previewCanvas').setPointerCapture(e.pointerId);
 });
 $('previewCanvas').addEventListener('pointermove', e => {
-  if (!imgDrag) return;
   const pxPerMm = mm2px(1)*curScale;
-  params.posX = imgDrag.px + (e.clientX-imgDrag.x)/pxPerMm;
-  params.posY = imgDrag.py + (e.clientY-imgDrag.y)/pxPerMm;
-  clampPos(); syncPosInputs(); applyZoom(); updateInfo();
+  if (txtDrag){
+    const t = state.texts[txtDrag.i];
+    if (!t){ txtDrag = null; return; }
+    t.x = txtDrag.tx + (e.clientX-txtDrag.x)/pxPerMm;
+    t.y = txtDrag.ty + (e.clientY-txtDrag.y)/pxPerMm;
+    syncTextEditor();
+    retextSchedule();
+    return;
+  }
+  if (imgDrag){
+    params.posX = imgDrag.px + (e.clientX-imgDrag.x)/pxPerMm;
+    params.posY = imgDrag.py + (e.clientY-imgDrag.y)/pxPerMm;
+    clampPos(); syncPosInputs(); applyZoom(); updateInfo();
+    return;
+  }
+  if (!state.cropMode)
+    e.currentTarget.style.cursor = textHit(e) >= 0 ? 'move' : '';
 });
-$('previewCanvas').addEventListener('pointerup', () => imgDrag = null);
+$('previewCanvas').addEventListener('pointerup', () => { imgDrag = null; txtDrag = null; });
 
 $('boardOn').onchange = e => {
   params.boardOn = e.target.checked;
@@ -723,6 +834,193 @@ $('cropCanvas').addEventListener('pointermove', e => {
   drawCrop();
 });
 $('cropCanvas').addEventListener('pointerup', () => cropUI.drag=null);
+
+/* ---------------- text UI ---------------- */
+
+/* fallback font list — filtered down to what this machine actually has
+   via canvas width probing (works offline / on file:// / in Firefox) */
+const FONT_CANDIDATES = [
+  'Arial','Arial Black','Bahnschrift','Book Antiqua','Brush Script MT',
+  'Calibri','Cambria','Candara','Comic Sans MS','Consolas','Constantia',
+  'Corbel','Courier New','Franklin Gothic Medium','Gabriola','Garamond',
+  'Georgia','Impact','Ink Free','Lucida Console','Lucida Handwriting',
+  'MV Boli','Palatino Linotype','Segoe Print','Segoe Script','Segoe UI',
+  'Segoe UI Black','Sitka','Tahoma','Times New Roman','Trebuchet MS','Verdana',
+  // common on mac/linux
+  'Helvetica','Helvetica Neue','Futura','Optima','Baskerville','Didot',
+  'American Typewriter','Chalkboard','Marker Felt','DejaVu Sans','Liberation Serif',
+];
+function detectFonts(){
+  const ctx = document.createElement('canvas').getContext('2d');
+  const SAMPLE = 'mmMWLil10@#';
+  const differs = (fam, base) => {
+    ctx.font = `40px ${base}`;
+    const w = ctx.measureText(SAMPLE).width;
+    ctx.font = `40px "${fam}", ${base}`;
+    return ctx.measureText(SAMPLE).width !== w;
+  };
+  return FONT_CANDIDATES.filter(f => differs(f,'monospace') || differs(f,'serif'));
+}
+
+function populateFonts(families){
+  const sel = $('txFont');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  for (const f of families){
+    const o = document.createElement('option');
+    o.value = f;
+    o.textContent = f;
+    o.style.fontFamily = `"${f}"`;   // dropdown shows each font rendered
+    sel.appendChild(o);
+  }
+  if (families.includes(keep)) sel.value = keep;
+  else sel.value = families.includes('Arial') ? 'Arial' : (families[0] || '');
+}
+populateFonts(detectFonts());
+
+/* Local Font Access API — the full installed-font library. Chrome/Edge
+   only, needs https or localhost, and must be called from a click. */
+if (!('queryLocalFonts' in window)){
+  const b = $('btnLocalFonts');
+  b.disabled = true;
+  b.title = 'Needs Chrome or Edge over https (or localhost) — using a built-in font list instead';
+}
+$('btnLocalFonts').onclick = async () => {
+  try {
+    const fonts = await window.queryLocalFonts();
+    const fams = [...new Set(fonts.map(f => f.family))]
+      .sort((a,b) => a.localeCompare(b));
+    if (!fams.length){ alert('No fonts returned — permission may have been denied.'); return; }
+    populateFonts(fams);
+    const b = $('btnLocalFonts');
+    b.textContent = `${fams.length} fonts loaded`;
+    b.disabled = true;
+    const t = curText();
+    if (t){ $('txFont').value = fams.includes(t.font) ? t.font : $('txFont').value; }
+  } catch(err){
+    alert('Could not read local fonts: ' + err.message);
+  }
+};
+
+const curText = () => state.texts[state.selText] || null;
+
+function renderTextList(){
+  const el = $('textList');
+  el.innerHTML = '';
+  state.texts.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'textItem' + (i === state.selText ? ' sel' : '');
+    const label = document.createElement('span');
+    label.textContent = String(t.text).split('\n')[0].slice(0, 28) || '(empty)';
+    label.style.fontFamily = `"${t.font}"`;
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = 'Delete';
+    del.onclick = e => { e.stopPropagation(); deleteText(i); };
+    row.onclick = () => selectText(i);
+    row.append(label, del);
+    el.appendChild(row);
+  });
+}
+
+function syncTextEditor(){
+  const t = curText();
+  $('textEd').style.display = t ? 'block' : 'none';
+  if (!t) return;
+  $('txText').value = t.text;
+  if (![...$('txFont').options].some(o => o.value === t.font)){
+    const o = document.createElement('option');
+    o.value = o.textContent = t.font;
+    o.style.fontFamily = `"${t.font}"`;
+    $('txFont').appendChild(o);
+  }
+  $('txFont').value = t.font;
+  $('txSize').value = t.size;
+  $('txBold').classList.toggle('on', t.bold);
+  $('txItalic').classList.toggle('on', t.italic);
+  $('txMode').value = t.mode;
+  $('txX').value = round1(t.x);
+  $('txY').value = round1(t.y);
+  $('txRot').value = t.rot;
+}
+
+function selectText(i){
+  state.selText = i;
+  renderTextList();
+  syncTextEditor();
+}
+function deleteText(i){
+  state.texts.splice(i, 1);
+  if (state.selText >= state.texts.length) state.selText = state.texts.length-1;
+  renderTextList();
+  syncTextEditor();
+  retextSchedule();
+}
+
+$('btnAddText').onclick = () => {
+  if (!state.source){ alert('Load an image first, then add text on top of it.'); return; }
+  state.texts.push({
+    text: 'Your text', font: $('txFont').value || 'Arial',
+    size: Math.max(3, round1(params.hmm/8)), bold: false, italic: false,
+    mode: 'burn', x: round1(params.wmm/2), y: round1(params.hmm*0.85), rot: 0,
+  });
+  selectText(state.texts.length-1);
+  retextSchedule();
+};
+$('btnDelText').onclick = () => { if (state.selText >= 0) deleteText(state.selText); };
+
+$('txText').addEventListener('input', () => {
+  const t = curText(); if (!t) return;
+  t.text = $('txText').value;
+  const row = $('textList').children[state.selText];
+  if (row) row.firstChild.textContent = t.text.split('\n')[0].slice(0, 28) || '(empty)';
+  retextSchedule();
+});
+$('txFont').onchange = () => {
+  const t = curText(); if (!t) return;
+  t.font = $('txFont').value;
+  renderTextList();
+  retextSchedule();
+};
+$('txSize').addEventListener('change', e => {
+  const t = curText(); if (!t) return;
+  t.size = Math.min(500, Math.max(1, parseFloat(e.target.value) || 10));
+  e.target.value = t.size;
+  retextSchedule();
+});
+$('txBold').onclick = () => {
+  const t = curText(); if (!t) return;
+  t.bold = !t.bold;
+  $('txBold').classList.toggle('on', t.bold);
+  retextSchedule();
+};
+$('txItalic').onclick = () => {
+  const t = curText(); if (!t) return;
+  t.italic = !t.italic;
+  $('txItalic').classList.toggle('on', t.italic);
+  retextSchedule();
+};
+$('txMode').onchange = () => {
+  const t = curText(); if (!t) return;
+  t.mode = $('txMode').value;
+  retextSchedule();
+};
+$('txX').addEventListener('change', e => {
+  const t = curText(); if (!t) return;
+  t.x = parseFloat(e.target.value) || 0;
+  retextSchedule();
+});
+$('txY').addEventListener('change', e => {
+  const t = curText(); if (!t) return;
+  t.y = parseFloat(e.target.value) || 0;
+  retextSchedule();
+});
+$('txRot').addEventListener('change', e => {
+  const t = curText(); if (!t) return;
+  t.rot = Math.min(180, Math.max(-180, parseFloat(e.target.value) || 0));
+  e.target.value = t.rot;
+  retextSchedule();
+});
 
 /* ---------------- controls binding ---------------- */
 function bindSlider(name){

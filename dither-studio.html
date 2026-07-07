@@ -85,6 +85,40 @@
     </div>
 
     <div class="sec">
+      <h2>Text</h2>
+      <div class="btnrow">
+        <button id="btnAddText" class="primary">Add text</button>
+        <button id="btnLocalFonts" title="List every font installed on this computer (asks for permission once)">Load my fonts</button>
+      </div>
+      <div id="textList"></div>
+      <div id="textEd" style="display:none">
+        <textarea id="txText" rows="2" placeholder="Your text"></textarea>
+        <select id="txFont"></select>
+        <div class="row">
+          <label>Size (mm)</label>
+          <input type="number" id="txSize" min="1" max="500" step="0.5" value="10">
+          <button id="txBold" class="tstyle" title="Bold"><b>B</b></button>
+          <button id="txItalic" class="tstyle" title="Italic"><i>I</i></button>
+        </div>
+        <div class="row">
+          <label>Style</label>
+          <select id="txMode" style="flex:1; width:auto">
+            <option value="burn">Engraved (laser fires)</option>
+            <option value="blank">Blank / knockout (no laser)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>X / Y (mm)</label>
+          <input type="number" id="txX" step="0.5">
+          <input type="number" id="txY" step="0.5">
+        </div>
+        <div class="row"><label>Rotation (&deg;)</label><input type="number" id="txRot" min="-180" max="180" step="1" value="0"><span class="grow"></span></div>
+        <div class="btnrow"><button id="btnDelText" class="warn">Delete this text</button></div>
+      </div>
+      <div class="hint">Drag text on the preview to position it. Text is stamped solid after dithering so it stays crisp in the exported PNG.</div>
+    </div>
+
+    <div class="sec">
       <h2>Adjustments</h2>
       <div class="sliderRow"><label>Brightness</label><input type="range" id="brightness" min="-100" max="100" step="1" value="0"><input type="number" id="brightnessN" min="-100" max="100" step="1" value="0"></div>
       <div class="sliderRow"><label>Contrast</label><input type="range" id="contrast" min="-100" max="100" step="1" value="0"><input type="number" id="contrastN" min="-100" max="100" step="1" value="0"></div>

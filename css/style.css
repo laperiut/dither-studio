@@ -64,6 +64,23 @@
     width:12px; height:12px; border-radius:50%; background:var(--accent); border:2px solid #0b1420;
   }
 
+  /* text tool */
+  textarea{
+    background:var(--panel2); color:var(--text);
+    border:1px solid var(--line); border-radius:5px;
+    padding:5px 7px; font:inherit; width:100%; resize:vertical; margin:6px 0;
+  }
+  .textItem{
+    display:flex; align-items:center; gap:6px; padding:4px 4px 4px 8px; margin:4px 0;
+    border:1px solid var(--line); border-radius:5px; cursor:pointer;
+    background:var(--panel2);
+  }
+  .textItem.sel{border-color:var(--accent);}
+  .textItem span{flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .textItem button{flex:0 0 auto; padding:0 7px; line-height:1.5;}
+  button.tstyle{flex:0 0 34px;}
+  button.tstyle.on{border-color:var(--accent); background:rgba(77,163,255,.18);}
+
   .check{display:flex; align-items:center; gap:8px; margin:7px 0; cursor:pointer;}
   .check input{accent-color:var(--accent); width:15px; height:15px;}
   .hint{color:var(--dim); font-size:11px; margin-top:6px;}
