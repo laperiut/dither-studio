@@ -129,12 +129,17 @@
   #boardWrap.clip{ overflow:hidden; }
   #boardBg{ position:absolute; inset:0; width:100%; height:100%; display:none; }
   #previewCanvas{ position:absolute; left:0; top:0; display:block; }
-  #boardWrap.boardOn #previewCanvas{ cursor:move; }
+  #textCanvas{ position:absolute; inset:0; width:100%; height:100%; display:block; z-index:2; }
   #boardWrap::after{
     content:''; position:absolute; inset:0; z-index:3;
     border:3px solid #ffd042; pointer-events:none; display:none;
   }
   #boardWrap.guides::after{ display:block; }
+  /* round workpiece: the board itself, its material and the guide ring all
+     follow the disc; the photo still overhangs while you position it */
+  #boardWrap.round, #boardWrap.round::after, #boardWrap.round #boardBg{
+    border-radius:50%;
+  }
   #previewCanvas.dashed{ outline:2px dashed rgba(255,208,66,.7); outline-offset:-1px; }
   #cropCanvas{cursor:move;}
   #dropMsg{

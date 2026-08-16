@@ -30,7 +30,9 @@
     <div class="sec">
       <h2>Material</h2>
       <select id="material">
-        <option value="wood">Wood</option>
+        <option value="mdf">MDF</option>
+        <option value="birch">Birchwood</option>
+        <option value="rimu">Rimu</option>
         <option value="slate">Black slate</option>
         <option value="acrylic">Acrylic (black)</option>
         <option value="leather">Leather</option>
@@ -40,6 +42,7 @@
         <option value="tile">White tile (Norton method)</option>
       </select>
       <label class="check"><input type="checkbox" id="previewMat" checked> Preview on material</label>
+      <label class="check"><input type="checkbox" id="materialLandscape"> Landscape background</label>
       <label class="check"><input type="checkbox" id="invert"> Invert image <span class="hint" style="margin:0">(auto-set per material)</span></label>
     </div>
 
@@ -47,8 +50,9 @@
       <h2>Board / workpiece</h2>
       <label class="check"><input type="checkbox" id="boardOn"> Show board</label>
       <div id="boardCtl" style="display:none">
-        <div class="row"><label>Width (mm)</label><input type="number" id="boardW" min="10" max="3000" step="1" value="300"><span class="grow"></span></div>
-        <div class="row"><label>Height (mm)</label><input type="number" id="boardH" min="10" max="3000" step="1" value="200"><span class="grow"></span></div>
+        <label class="check" title="Round workpiece &mdash; coaster, disc, round plaque. The board becomes a circle of the diameter below."><input type="checkbox" id="boardRound"> Round board (circle)</label>
+        <div class="row"><label id="boardWLabel">Width (mm)</label><input type="number" id="boardW" min="10" max="3000" step="1" value="300"><span class="grow"></span></div>
+        <div class="row" id="boardHRow"><label>Height (mm)</label><input type="number" id="boardH" min="10" max="3000" step="1" value="200"><span class="grow"></span></div>
         <div class="row"><label>Image X (mm)</label><input type="number" id="posX" step="0.5" value="0"><span class="grow"></span></div>
         <div class="row"><label>Image Y (mm)</label><input type="number" id="posY" step="0.5" value="0"><span class="grow"></span></div>
         <div class="btnrow">
@@ -164,7 +168,8 @@
         <button id="btnExport" class="primary">Download PNG</button>
         <button id="btnMockup">Download mockup (JPG)</button>
       </div>
-      <div class="hint">PNG is saved with your DPI embedded — in LightBurn/xTool import it and set image mode to <b>Pass-through</b>. The mockup JPG is the smooth &ldquo;how it will look&rdquo; picture (with board, if shown) for sending to customers.</div>
+      <label class="check" title="Leave everything the laser does not burn transparent instead of white. Useful for compositing the artwork elsewhere; for LightBurn/xTool leave this off."><input type="checkbox" id="exportAlpha"> Transparent background</label>
+      <div class="hint">PNG is saved with your DPI embedded — in LightBurn/xTool import it and set image mode to <b>Pass-through</b>. Leave <b>Transparent background</b> off for laser work: some importers read transparent as black and would burn the whole background. The mockup JPG is the smooth &ldquo;how it will look&rdquo; picture (with board, if shown) for sending to customers.</div>
     </div>
   </div>
 
@@ -192,6 +197,7 @@
       <div id="boardWrap" style="display:none">
         <canvas id="boardBg"></canvas>
         <canvas id="previewCanvas"></canvas>
+        <canvas id="textCanvas"></canvas>
       </div>
       <canvas id="cropCanvas" style="display:none"></canvas>
       <span id="busy">processing&hellip;</span>

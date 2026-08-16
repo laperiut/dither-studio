@@ -22,12 +22,13 @@ const state = {
 };
 
 const params = {
-  material: 'wood', previewMat: true, invert: false,
+  material: 'mdf', previewMat: true, materialLandscape: false, invert: false,
   wmm: 100, hmm: 100, lockAspect: true, dpi: 254,
   brightness: 0, contrast: 0, gamma: 1,
   usRadius: 0, usAmount: 0,
-  algo: 'jarvis', zoom: 'fit',
-  boardOn: false, boardW: 300, boardH: 200, posX: 0, posY: 0, boardPreview: false,
+  algo: 'jarvis', zoom: 'fit', exportAlpha: false,
+  boardOn: false, boardW: 300, boardH: 200, boardRound: false,
+  posX: 0, posY: 0, boardPreview: false,
   engrave: false,
 };
 
@@ -54,10 +55,10 @@ function render(){
   const warnEl = $('warn');
   if (W*H > 40e6){
     warnEl.style.display='block';
-    warnEl.textContent = `Output would be ${(W*H/1e6).toFixed(0)} megapixels — reduce size or DPI (limit 40 MP).`;
-    return;
+    warnEl.textContent = `Large output: ${(W*H/1e6).toFixed(0)} megapixels — processing and export may be slower.`;
+  } else {
+    warnEl.style.display='none';
   }
-  warnEl.style.display='none';
   $('busy').style.display='inline';
 
   // let the busy indicator paint before the heavy work
@@ -140,19 +141,55 @@ function renderCore(W, H){
 }
 
 /* ---------------- text overlay ----------------
-   Text is stamped into the burn mask AFTER dithering: solid pixels, no
-   dither speckle on the glyph edges, and it flows into the PNG export,
-   mockup and engraved preview for free. */
+   Text lives in BOARD space (or image space when there is no board), fully
+   independent of the photo: it renders on its own canvas layer over the whole
+   board, so it can sit anywhere — over the photo or out on the bare material.
 
-/* re-apply all texts onto a copy of the cached dither result — cheap,
-   so dragging text never re-runs the dither pipeline */
+   Two things happen each time text changes:
+   1. a "hole" is cut in the photo raster wherever a glyph (or its offset
+      keep-out halo) overlaps the image — this is what gives knockout text
+      its bare-material look and keeps the photo from crowding the letters;
+   2. the engraved (burn-mode) glyphs are painted on the overlay layer.
+   Because the photo dither itself is cached, dragging text never re-runs the
+   dither pipeline. */
+
+/* image position within the content/board area, in image px */
+function imgOffset(){
+  return params.boardOn
+    ? {ox: Math.round(mm2px(params.posX)), oy: Math.round(mm2px(params.posY))}
+    : {ox: 0, oy: 0};
+}
+
+/* render each visible text once; record hit-boxes in CONTENT (board) px */
+function textItems(){
+  const items = [];
+  state.textBoxes = state.texts.map(() => null);
+  state.texts.forEach((t, idx) => {
+    if (!String(t.text).trim()) return;
+    const r = renderTextItem(t);   // x0,y0 in content px
+    state.textBoxes[idx] = {x: r.x0, y: r.y0, w: r.c.width, h: r.c.height};
+    items.push({t, r});
+  });
+  return items;
+}
+
 function retext(){
   if (!state.base) return;
   const {W, H} = state.base;
   const burn = new Uint8Array(state.base.burn);
   const mask = new Uint8Array(state.base.mask);
-  applyTexts(burn, mask, W, H);
+  const {ox, oy} = imgOffset();
+  const items = textItems();
+  // cut holes in the photo (content px → image px via the image offset):
+  // the offset halo first, then the glyph itself — for every text, both
+  // modes. Knockout letters show the bare hole; burn letters get the same
+  // clean space and are then painted on top by the overlay layer.
+  for (const {r} of items){
+    if (r.halo) stampCanvas(r.halo, r.x0 - ox, r.y0 - oy, W, H, i => { burn[i] = 0; });
+    stampCanvas(r.c, r.x0 - ox, r.y0 - oy, W, H, i => { burn[i] = 0; });
+  }
   state.out = {burn, mask, W, H};
+  state.textItems = items;
   drawPreview();
 }
 let textTimer = null;
@@ -219,24 +256,45 @@ function stampCanvas(c, x0, y0, W, H, put){
   }
 }
 
-function applyTexts(burn, mask, W, H){
-  state.textBoxes = state.texts.map(() => null);
-  const items = [];
-  state.texts.forEach((t, idx) => {
-    if (!String(t.text).trim()) return;
-    const r = renderTextItem(t);
-    state.textBoxes[idx] = {x: r.x0, y: r.y0, w: r.c.width, h: r.c.height};
-    items.push({t, r});
-  });
-  // pass 1: every offset halo clears the image, so a neighbouring text's
-  //         pixels can never engrave inside another text's breathing room
-  for (const {r} of items)
-    if (r.halo) stampCanvas(r.halo, r.x0, r.y0, W, H, i => { burn[i] = 0; });
-  // pass 2: the glyphs themselves
-  for (const {t, r} of items)
-    stampCanvas(r.c, r.x0, r.y0, W, H,
-      t.mode === 'blank' ? i => { burn[i] = 0; }
-                         : i => { burn[i] = 1; mask[i] = 1; });
+/* recolour a black glyph canvas (keeps its alpha shape) */
+function colorizeGlyph(glyph, colorStr){
+  const c = document.createElement('canvas');
+  c.width = glyph.width; c.height = glyph.height;
+  const x = c.getContext('2d');
+  x.drawImage(glyph, 0, 0);
+  x.globalCompositeOperation = 'source-in';
+  x.fillStyle = colorStr;
+  x.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+
+/* paint every burn-mode glyph onto ctx, scaling content px by k.
+   knockout glyphs paint nothing — their bare-material look comes from the
+   hole already cut in the photo (or from untouched material off the photo). */
+function paintBurnText(ctx, k, colorStr){
+  for (const {t, r} of (state.textItems || [])){
+    if (t.mode !== 'burn') continue;
+    const g = colorizeGlyph(r.c, colorStr);
+    ctx.drawImage(g, r.x0*k, r.y0*k, r.c.width*k, r.c.height*k);
+  }
+}
+
+/* the text overlay layer, sized to the whole board (content) area */
+const TEXT_MAX = 2400;
+function drawTextLayer(){
+  const tc = $('textCanvas');
+  const c = contentPx();
+  if (!c){ tc.width = tc.height = 1; return; }
+  const k = Math.min(1, TEXT_MAX/Math.max(c.cw, c.ch));
+  const w = Math.max(1, Math.round(c.cw*k)), h = Math.max(1, Math.round(c.ch*k));
+  if (tc.width !== w || tc.height !== h){ tc.width = w; tc.height = h; }
+  const x = tc.getContext('2d');
+  x.clearRect(0, 0, w, h);
+  const mat = MATERIALS[params.material];
+  const col = hexToRgb(mat.burn);
+  const colorStr = params.previewMat
+    ? `rgba(${col.r},${col.g},${col.b},${mat.alpha/255})` : '#000';
+  paintBurnText(x, k, colorStr);
 }
 
 /* ---------------- preview drawing ---------------- */
@@ -253,7 +311,7 @@ function drawPreview(){
     const mat = MATERIALS[params.material];
     // on a board the material shows through from the board itself;
     // standalone, the canvas carries its own background
-    if (!params.boardOn) drawMaterialBg(x, params.material, W, H);
+    if (!params.boardOn) drawMaterialBg(x, params.material, W, H, params.materialLandscape);
     x.drawImage(makeBurnLayer(isEngraveView()), 0, 0);
   } else {
     const layer = x.createImageData(W,H);
@@ -268,6 +326,7 @@ function drawPreview(){
     }
     x.putImageData(layer,0,0);
   }
+  drawTextLayer();
   updateBoard();
   $('dropMsg').style.display='none';
   $('boardWrap').style.display='block';
@@ -324,13 +383,30 @@ function makeBurnLayer(engrave){
 let curScale = 1;
 function mm2px(mm){ return mm/25.4*params.dpi; }
 
+/* board size in mm. A round board is a circle, so its bounding box is square
+   at the diameter — boardH is left untouched so unticking Round restores it. */
+function boardMM(){
+  return {w: params.boardW, h: params.boardRound ? params.boardW : params.boardH};
+}
+
+/* clip a canvas context to the board outline (no-op on a square board) */
+function clipBoard(ctx, w, h){
+  if (!params.boardOn || !params.boardRound) return false;
+  ctx.beginPath();
+  ctx.ellipse(w/2, h/2, w/2, h/2, 0, 0, Math.PI*2);
+  ctx.clip();
+  return true;
+}
+
 /* content = what fills the stage: the board (if shown) or just the image */
 function contentPx(){
-  if (!state.out) return null;
-  const {W, H} = state.out;
+  const o = state.out || state.base;
+  if (!o) return null;
+  const {W, H} = o;
   if (params.boardOn){
-    return {cw: Math.max(1, Math.round(mm2px(params.boardW))),
-            ch: Math.max(1, Math.round(mm2px(params.boardH))),
+    const b = boardMM();
+    return {cw: Math.max(1, Math.round(mm2px(b.w))),
+            ch: Math.max(1, Math.round(mm2px(b.h))),
             ox: Math.round(mm2px(params.posX)),
             oy: Math.round(mm2px(params.posY)), W, H};
   }
@@ -448,7 +524,7 @@ function updateMinimap(){
   const mx = mc.getContext('2d');
   mx.clearRect(0,0,mw,mh);
   if (params.boardOn){
-    if (params.previewMat) drawMaterialBg(mx, params.material, mw, mh);
+    if (params.previewMat) drawMaterialBg(mx, params.material, mw, mh, params.materialLandscape);
     else { mx.fillStyle='#fff'; mx.fillRect(0,0,mw,mh); }
     mx.drawImage(cv, c.ox*k, c.oy*k, c.W*k, c.H*k);
   } else {
@@ -487,7 +563,8 @@ $('minimap').addEventListener('pointerup',   () => miniDrag = false);
 
 /* ---------------- board / workpiece ---------------- */
 function clampPos(){
-  const fx = params.boardW - params.wmm, fy = params.boardH - params.hmm;
+  const b = boardMM();
+  const fx = b.w - params.wmm, fy = b.h - params.hmm;
   params.posX = Math.min(Math.max(0,fx), Math.max(Math.min(0,fx), params.posX));
   params.posY = Math.min(Math.max(0,fy), Math.max(Math.min(0,fy), params.posY));
 }
@@ -496,13 +573,15 @@ function syncPosInputs(){
   $('posY').value = Math.round(params.posY*10)/10;
 }
 function centerOnBoard(){
-  params.posX = (params.boardW - params.wmm)/2;
-  params.posY = (params.boardH - params.hmm)/2;
+  const b = boardMM();
+  params.posX = (b.w - params.wmm)/2;
+  params.posY = (b.h - params.hmm)/2;
   syncPosInputs();
 }
 function updateBoard(){
   const bwEl = $('boardWrap'), cv = $('previewCanvas');
   bwEl.classList.toggle('boardOn', params.boardOn);
+  bwEl.classList.toggle('round',  params.boardOn && params.boardRound);
   bwEl.classList.toggle('guides', params.boardOn && !params.boardPreview);
   bwEl.classList.toggle('clip',   params.boardOn && params.boardPreview);
   cv.classList.toggle('dashed',   params.boardOn && !params.boardPreview);
@@ -514,7 +593,7 @@ function updateBoard(){
       const k = Math.min(1, 1600/Math.max(c.cw, c.ch));
       const w = Math.max(1, Math.round(c.cw*k)), h = Math.max(1, Math.round(c.ch*k));
       if (bg.width !== w || bg.height !== h){ bg.width = w; bg.height = h; }
-      drawMaterialBg(bg.getContext('2d'), params.material, w, h);
+      drawMaterialBg(bg.getContext('2d'), params.material, w, h, params.materialLandscape);
     }
     bg.style.display = 'block';
     bwEl.style.backgroundColor = '';
@@ -529,36 +608,47 @@ function updateBoard(){
   updateInfo();
 }
 
-/* drag text (topmost hit) or, on a board, the image itself */
+/* drag text (topmost hit) or, on a board, the image itself.
+   All hit-testing is in CONTENT (board) space — the text layer covers the
+   whole board, so text is grabbable anywhere, not just over the photo. */
 let imgDrag = null, txtDrag = null;
-function textHit(e){
-  if (!state.out) return -1;
-  const r = $('previewCanvas').getBoundingClientRect();
-  const cx = (e.clientX - r.left)/r.width  * state.out.W;
-  const cy = (e.clientY - r.top) /r.height * state.out.H;
+const textLayer = $('textCanvas');
+function contentPtr(e){
+  const r = textLayer.getBoundingClientRect();
+  const c = contentPx();
+  if (!c || !r.width) return null;
+  return {cx: (e.clientX - r.left)/r.width * c.cw,
+          cy: (e.clientY - r.top) /r.height * c.ch, c};
+}
+function textHit(p){
+  if (!p) return -1;
   for (let i = state.texts.length-1; i >= 0; i--){
     const b = state.textBoxes[i];
-    if (b && cx >= b.x && cx <= b.x+b.w && cy >= b.y && cy <= b.y+b.h) return i;
+    if (b && p.cx >= b.x && p.cx <= b.x+b.w && p.cy >= b.y && p.cy <= b.y+b.h) return i;
   }
   return -1;
 }
-$('previewCanvas').addEventListener('pointerdown', e => {
+const overImage = p => p && params.boardOn &&
+  p.cx >= p.c.ox && p.cx <= p.c.ox+p.c.W && p.cy >= p.c.oy && p.cy <= p.c.oy+p.c.H;
+
+textLayer.addEventListener('pointerdown', e => {
   if (e.button !== 0 || state.cropMode) return;
-  const hit = textHit(e);
+  const p = contentPtr(e);
+  const hit = textHit(p);
   if (hit >= 0){
     e.preventDefault();
     selectText(hit);
     const t = state.texts[hit];
     txtDrag = {i:hit, x:e.clientX, y:e.clientY, tx:t.x, ty:t.y};
-    $('previewCanvas').setPointerCapture(e.pointerId);
+    textLayer.setPointerCapture(e.pointerId);
     return;
   }
-  if (!params.boardOn) return;
+  if (!overImage(p)) return;
   e.preventDefault();
   imgDrag = {x:e.clientX, y:e.clientY, px:params.posX, py:params.posY};
-  $('previewCanvas').setPointerCapture(e.pointerId);
+  textLayer.setPointerCapture(e.pointerId);
 });
-$('previewCanvas').addEventListener('pointermove', e => {
+textLayer.addEventListener('pointermove', e => {
   const pxPerMm = mm2px(1)*curScale;
   if (txtDrag){
     const t = state.texts[txtDrag.i];
@@ -572,39 +662,61 @@ $('previewCanvas').addEventListener('pointermove', e => {
   if (imgDrag){
     params.posX = imgDrag.px + (e.clientX-imgDrag.x)/pxPerMm;
     params.posY = imgDrag.py + (e.clientY-imgDrag.y)/pxPerMm;
-    clampPos(); syncPosInputs(); applyZoom(); updateInfo();
+    clampPos(); syncPosInputs(); applyZoom(); updateInfo(); retextSchedule();
     return;
   }
-  if (!state.cropMode)
-    e.currentTarget.style.cursor = textHit(e) >= 0 ? 'move' : '';
+  if (!state.cropMode){
+    const p = contentPtr(e);
+    textLayer.style.cursor = textHit(p) >= 0 ? 'move' : (overImage(p) ? 'move' : 'default');
+  }
 });
-$('previewCanvas').addEventListener('pointerup', () => { imgDrag = null; txtDrag = null; });
+textLayer.addEventListener('pointerup', () => {
+  const settle = imgDrag || txtDrag;
+  imgDrag = null; txtDrag = null;
+  if (settle) retext();   // settle final position (halo/knockout follow)
+});
+
+/* board geometry moved → recut photo holes & repaint the text overlay
+   (both depend on the image's position/size within the board) */
+function refresh(){ if (state.base) retext(); else updateBoard(); }
 
 $('boardOn').onchange = e => {
   params.boardOn = e.target.checked;
   $('boardCtl').style.display = params.boardOn ? 'block' : 'none';
   if (params.boardOn) centerOnBoard();
-  if (state.out) drawPreview(); else updateBoard();
+  refresh();
+};
+/* a round board is defined by one number, so width becomes the diameter
+   and the height row is hidden (its value is kept for switching back) */
+function syncBoardShape(){
+  $('boardWLabel').textContent = params.boardRound ? 'Diameter (mm)' : 'Width (mm)';
+  $('boardHRow').style.display = params.boardRound ? 'none' : '';
+}
+$('boardRound').onchange = e => {
+  params.boardRound = e.target.checked;
+  syncBoardShape();
+  centerOnBoard();
+  refresh();
 };
 $('boardW').addEventListener('change', e => {
   params.boardW = Math.min(3000, Math.max(10, parseFloat(e.target.value)||10));
   e.target.value = params.boardW;
-  clampPos(); syncPosInputs(); updateBoard();
+  clampPos(); syncPosInputs(); refresh();
 });
 $('boardH').addEventListener('change', e => {
   params.boardH = Math.min(3000, Math.max(10, parseFloat(e.target.value)||10));
   e.target.value = params.boardH;
-  clampPos(); syncPosInputs(); updateBoard();
+  clampPos(); syncPosInputs(); refresh();
 });
 $('posX').addEventListener('change', e => {
   params.posX = parseFloat(e.target.value)||0;
-  clampPos(); syncPosInputs(); applyZoom(); updateInfo();
+  clampPos(); syncPosInputs(); applyZoom(); updateInfo(); refresh();
 });
 $('posY').addEventListener('change', e => {
   params.posY = parseFloat(e.target.value)||0;
-  clampPos(); syncPosInputs(); applyZoom(); updateInfo();
+  clampPos(); syncPosInputs(); applyZoom(); updateInfo(); refresh();
 });
-$('btnCenter').onclick = () => { centerOnBoard(); applyZoom(); updateInfo(); };
+$('btnCenter').onclick = () => { centerOnBoard(); applyZoom(); updateInfo(); refresh(); };
 $('btnBoardPreview').onclick = () => {
   params.boardPreview = !params.boardPreview;
   const b = $('btnBoardPreview');
@@ -617,8 +729,11 @@ function updateInfo(){
   const {W, H} = targetPx();
   $('pxInfo').textContent = `${W} × ${H} px`;
   let t = `${W} × ${H} px  •  ${params.wmm} × ${params.hmm} mm @ ${params.dpi} DPI  •  ${params.algo}`;
-  if (params.boardOn)
-    t = `board ${params.boardW} × ${params.boardH} mm  •  image at ${Math.round(params.posX*10)/10}, ${Math.round(params.posY*10)/10} mm  •  ` + t;
+  if (params.boardOn){
+    const b = boardMM();
+    const size = params.boardRound ? `⌀ ${b.w} mm round` : `${b.w} × ${b.h} mm`;
+    t = `board ${size}  •  image at ${Math.round(params.posX*10)/10}, ${Math.round(params.posY*10)/10} mm  •  ` + t;
+  }
   $('info').textContent = t;
 }
 
@@ -989,10 +1104,13 @@ function deleteText(i){
 
 $('btnAddText').onclick = () => {
   if (!state.source){ alert('Load an image first, then add text on top of it.'); return; }
+  // default position: near the top of whatever surface we're on (board or photo)
+  const surfW = params.boardOn ? boardMM().w : params.wmm;
+  const surfH = params.boardOn ? boardMM().h : params.hmm;
   state.texts.push({
     text: 'Your text', font: $('txFont').value || 'Arial',
-    size: Math.max(3, round1(params.hmm/8)), bold: false, italic: false,
-    mode: 'burn', x: round1(params.wmm/2), y: round1(params.hmm*0.85), rot: 0,
+    size: Math.max(3, round1(surfH/8)), bold: false, italic: false,
+    mode: 'burn', x: round1(surfW/2), y: round1(surfH*0.12), rot: 0,
     offset: 3,
   });
   selectText(state.texts.length-1);
@@ -1095,6 +1213,10 @@ $('previewMat').onchange = e => {
   }
   drawPreview();
 };
+$('materialLandscape').onchange = e => {
+  params.materialLandscape = e.target.checked;
+  drawPreview();
+};
 $('btnEngrave').onclick = () => {
   params.engrave = !params.engrave;
   $('btnEngrave').classList.toggle('primary', params.engrave);
@@ -1136,26 +1258,54 @@ $('dpi').addEventListener('change', e => {
 });
 window.addEventListener('resize', applyZoom);
 
-/* ---------------- export ---------------- */
+/* ---------------- export ----------------
+   The laser file is black = laser fires, white = skip. With a board shown it
+   is the WHOLE plaque at board size: photo placed at its offset, engraved
+   text stamped black, knockout text and offset halos left white (already cut
+   from the photo raster). Without a board it is just the photo. */
 $('btnExport').onclick = async () => {
   if (!state.out) return;
   const {burn, mask, W, H} = state.out;
-  const c = document.createElement('canvas');
-  c.width=W; c.height=H;
-  const x = c.getContext('2d');
-  const img = x.createImageData(W,H);
-  const p = img.data;
+
+  // the photo as black-fires-on-transparent, so it can be placed on the board
+  const photo = document.createElement('canvas');
+  photo.width = W; photo.height = H;
+  const pimg = photo.getContext('2d').createImageData(W, H);
+  const pp = pimg.data;
   for (let i=0, j=0; i<burn.length; i++, j+=4){
-    const v = (mask[i] && burn[i]) ? 0 : 255;   // black = laser fires
-    p[j]=v; p[j+1]=v; p[j+2]=v; p[j+3]=255;
+    if (mask[i] && burn[i]){ pp[j]=pp[j+1]=pp[j+2]=0; pp[j+3]=255; }
   }
-  x.putImageData(img,0,0);
+  photo.getContext('2d').putImageData(pimg, 0, 0);
+
+  const board = params.boardOn;
+  const {ox, oy} = imgOffset();
+  const b = boardMM();
+  const cw = board ? Math.max(1, Math.round(mm2px(b.w))) : W;
+  const ch = board ? Math.max(1, Math.round(mm2px(b.h))) : H;
+
+  const c = document.createElement('canvas');
+  c.width = cw; c.height = ch;
+  const x = c.getContext('2d');
+  // white = no laser. Transparent says the same thing to a human but not to
+  // every importer, so it stays opt-in — a transparent source PNG otherwise
+  // comes back with a white background, which is what most people expect.
+  if (!params.exportAlpha){ x.fillStyle = '#fff'; x.fillRect(0, 0, cw, ch); }
+  x.save();
+  clipBoard(x, cw, ch);        // round board: nothing fires off the disc
+  x.drawImage(photo, board ? ox : 0, board ? oy : 0);   // photo (black fires)
+  paintBurnText(x, 1, '#000');                          // engraved text, black
+  x.restore();
+
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
   const buf = new Uint8Array(await blob.arrayBuffer());
   const withDpi = insertPngDpi(buf, params.dpi);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([withDpi], {type:'image/png'}));
-  a.download = `dither_${params.algo}_${params.wmm}x${params.hmm}mm_${params.dpi}dpi.png`;
+  a.download = board
+    ? (params.boardRound
+        ? `plaque_round${b.w}mm_${params.dpi}dpi.png`
+        : `plaque_${b.w}x${b.h}mm_${params.dpi}dpi.png`)
+    : `dither_${params.algo}_${params.wmm}x${params.hmm}mm_${params.dpi}dpi.png`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
@@ -1172,10 +1322,25 @@ $('btnMockup').onclick = () => {
   const out = document.createElement('canvas');
   out.width = mw; out.height = mh;
   const ox = out.getContext('2d');
-  drawMaterialBg(ox, params.material, mw, mh);
+  drawMaterialBg(ox, params.material, mw, mh, params.materialLandscape);
   ox.imageSmoothingEnabled = true;
   ox.imageSmoothingQuality = 'high';
   ox.drawImage(makeBurnLayer(true), c.ox*k, c.oy*k, c.W*k, c.H*k);
+  // engraved text on top, in the material's burn colour
+  const mat = MATERIALS[params.material], bc = hexToRgb(mat.burn);
+  paintBurnText(ox, k, `rgba(${bc.r},${bc.g},${bc.b},${mat.alpha/255})`);
+  if (params.boardOn && params.boardRound){
+    // punch the disc out of the finished plaque (soft edge), then drop a white
+    // studio background behind it — JPEG has no alpha to leave the corners on
+    ox.globalCompositeOperation = 'destination-in';
+    ox.beginPath();
+    ox.ellipse(mw/2, mh/2, mw/2, mh/2, 0, 0, Math.PI*2);
+    ox.fill();
+    ox.globalCompositeOperation = 'destination-over';
+    ox.fillStyle = '#ffffff';
+    ox.fillRect(0, 0, mw, mh);
+    ox.globalCompositeOperation = 'source-over';
+  }
   try {
     out.toBlob(b => {
       if (!b){ alert('Mockup export failed.'); return; }
@@ -1242,4 +1407,10 @@ const SEC_KEY = 'ditherStudio.closedSections';
   });
 })();
 
+$('exportAlpha').onchange = e => { params.exportAlpha = e.target.checked; };
+
+/* browsers restore checkbox state across a reload — take the DOM as truth */
+params.boardRound = $('boardRound').checked;
+params.exportAlpha = $('exportAlpha').checked;
+syncBoardShape();
 updateInfo();

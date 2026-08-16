@@ -10,12 +10,12 @@ A free, 100% offline image dithering tool for laser engraving. Runs entirely in 
 
 Prepares photos for laser engraving the same way paid/online tools like imag-r do:
 
-- **Material presets** — wood, black slate, black acrylic, leather, cork, glass, anodized aluminium, white tile (Norton method) — each with the right invert setting and a realistic on-material preview
+- **Material presets** — MDF, Birchwood, Rimu, black slate, black acrylic, leather, cork, glass, anodized aluminium, white tile (Norton method) — each with the right invert setting and a realistic on-material preview
 - **12 dither algorithms** — Jarvis–Judice–Ninke, Stucki, Floyd–Steinberg, Atkinson, Burkes, Sierra (3 variants), Bayer 8×8 ordered, clustered-dot halftone, sketch, and plain threshold
 - **Size & DPI control** — set output size in mm and DPI (254 / 282 / 423 / 508); the exported PNG has the DPI embedded, so LightBurn / xTool just needs image mode set to **Pass-through**
 - **Adjustments** — brightness, contrast, gamma, unsharp mask sharpening
 - **Crop** — rectangular or circle crop
-- **Board / workpiece preview** — position the image on a board of your dimensions, drag to place
+- **Board / workpiece preview** — rectangular or round (coasters, discs); position the image on a board of your dimensions, drag to place
 - **Engraved preview** — simulates how the dots blend together in the real burn
 - **Customer mockups** — export a smooth "how it will look" JPG to send to customers
 

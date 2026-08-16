@@ -1,7 +1,9 @@
 "use strict";
 /* ---------------- materials ---------------- */
 const MATERIALS = {
-  wood:   {burn:'#3a220e', invert:false, alpha:235},
+  mdf:    {burn:'#3a220e', invert:false, alpha:235},
+  birch:  {burn:'#3a220e', invert:false, alpha:235},
+  rimu:   {burn:'#3a220e', invert:false, alpha:235},
   slate:  {burn:'#d3d7da', invert:true,  alpha:225},
   acrylic:{burn:'#e9e9ee', invert:true,  alpha:215},
   leather:{burn:'#2a170a', invert:false, alpha:235},
@@ -29,7 +31,9 @@ function materialTile(mat){
   };
 
   switch(mat){
-    case 'wood': {
+    case 'mdf':
+    case 'birch':
+    case 'rimu': {
       x.fillStyle='#b3854f'; x.fillRect(0,0,S,S);
       for (let i=0;i<38;i++){
         const y0 = rnd()*S, amp = 2+rnd()*5, per = 40+rnd()*90;
@@ -128,7 +132,9 @@ function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a
    procedural tiles above remain as the fallback for other materials
    or if the folder is missing */
 const MATERIAL_PHOTOS = {
-  wood:  {src:WOOD_BG,  rotate:true},   // rotate 90° → horizontal grain
+  mdf:   {src:MDF_BG,   rotate:false},
+  birch: {src:BIRCH_BG, rotate:false},
+  rimu:  {src:RIMU_BG,  rotate:false},
   slate: {src:SLATE_BG, rotate:false},
 };
 for (const cfg of Object.values(MATERIAL_PHOTOS)){
@@ -136,10 +142,10 @@ for (const cfg of Object.values(MATERIAL_PHOTOS)){
   img.onload = () => { cfg.img = img; if (state.out) drawPreview(); };
   img.src = cfg.src;
 }
-function drawMaterialBg(ctx, mat, w, h){
+function drawMaterialBg(ctx, mat, w, h, landscape=false){
   const ph = MATERIAL_PHOTOS[mat];
   if (ph && ph.img){
-    if (ph.rotate){
+    if (ph.rotate !== landscape){
       ctx.save();
       ctx.translate(w/2, h/2);
       ctx.rotate(Math.PI/2);
@@ -153,4 +159,3 @@ function drawMaterialBg(ctx, mat, w, h){
     ctx.fillRect(0, 0, w, h);
   }
 }
-
